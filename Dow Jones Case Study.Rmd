@@ -1,0 +1,326 @@
+---
+title: "Dow Jones Case Study"
+author: "Dylan Rowe"
+date: "February 10, 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+dowdata = read.csv("C:/Users/Dylan/Documents/MSDA/SEM3/Data Analytics Applications/Dow Jones Case Study/dow_jones_index.data")
+```
+
+```{r}
+dowdata = na.omit(dowdata)
+str(dowdata)
+summary(dowdata)
+```
+
+```{r}
+head(dowdata)
+```
+
+
+#We need to clean the data and remove those dollar signs from our variables
+```{r}
+dowdata$quarter = as.factor(dowdata$quarter)
+dowdata$stock = as.factor(dowdata$stock)
+dowdata$open = as.numeric(gsub('\\$', '',dowdata$open))
+dowdata$high = as.numeric(gsub("\\$", "", dowdata$high))
+dowdata$low = as.numeric(gsub("\\$", "", dowdata$low))
+dowdata$close = as.numeric(gsub("\\$", "", dowdata$close))
+dowdata$next_weeks_open = as.numeric(gsub("\\$", "", dowdata$next_weeks_open))
+dowdata$next_weeks_close = as.numeric(gsub("\\$", "", dowdata$next_weeks_close))
+dowdata$date = as.Date(dowdata$date, format = "%m/%d/%Y")
+dowdata2 = dowdata
+```
+
+#Look at a plot of the lags to see if any lags need to be included in our data
+```{r}
+lag.plot(dowdata$open,6)
+lag.plot(dowdata$close,6)
+lag.plot(dowdata$low,6)
+lag.plot(dowdata$high,6)
+```
+
+```{r}
+library(dplyr)
+dowdata = dowdata %>% group_by(stock) %>% mutate(lag.open = lag(open, n = 1))
+dowdata = dowdata %>% group_by(stock) %>% mutate(lag.close = lag(close, n = 1))
+dowdata = dowdata %>% group_by(stock) %>% mutate(lag.low = lag(low, n = 1))
+dowdata = dowdata %>% group_by(stock) %>% mutate(lag.high = lag(high, n = 1))
+dowdata = dowdata %>% group_by(stock) %>% mutate(lag.volume = lag(volume, n = 1))
+dowdata = dowdata %>% group_by(stock) %>% 
+  mutate(lag.percent_change_volume_over_last_wk 
+         = lag(percent_change_volume_over_last_wk, n = 1))
+```
+
+#Let's make some histograms to look at the distribution of our data
+```{r}
+hist(dowdata$open)
+hist(dowdata$close)
+hist(dowdata$low)
+hist(dowdata$high)
+```
+
+#Now we will split the data into a test and train set by quarter 1 and quarter 2
+```{r}
+dowdata_split = split(dowdata, dowdata$quarter)
+dow_train = dowdata_split[[1]]
+dow_test = dowdata_split[[2]]
+```
+
+#We will also split the data on stock in order to run a model for each stock
+```{r}
+dowtrain_split = split(dow_train, dow_train$stock)
+dowtest_split = split(dow_test, dow_test$stock)
+```
+
+#Use a for loop to run the 30 stock models using a linear regression and store the MSE predicted on the test set of data
+```{r}
+#Create an empty vector to store MSE values
+MSE = c()
+AccLin = c()
+n = names(dowtrain_split)
+for (i in 1:30) {
+  y = dowtest_split[[i]]$percent_change_price
+  model <- glm(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[i]])
+  model.preds = predict(model, newdata = dowtest_split[[i]])
+  MSE[i] = mean((y - model.preds)^2)
+  y2 = ifelse(dowtest_split[[i]]$percent_change_price > 0.5,1,0)
+  model.class = ifelse(model.preds > 0.5,1,0)
+  AccLin[i] = 1 - mean(y2!=model.class)
+  #print(summary(model))
+}
+LinMSE = cbind(n,MSE)
+LinAcc = cbind(n,AccLin)
+```
+
+#Use a for loop to run a decision tree for the 30 stock companies and store the MSE predicted on the test set of data
+```{r}
+library(tree)
+MSEtree = c()
+Acctree = c()
+for (i in 1:30) {
+  y = dowtest_split[[i]]$percent_change_price
+  model <- tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[i]])
+  model.preds = predict(model, newdata = dowtest_split[[i]])
+  MSEtree[i] = mean((y - model.preds)^2)
+  y2 = ifelse(dowtest_split[[i]]$percent_change_price > 0.5,1,0)
+  model.class = ifelse(model.preds > 0.5,1,0)
+  Acctree[i] = 1 - mean(y2!=model.class)
+}
+TreeMSE = cbind(n,MSEtree)
+TreeAcc = cbind(n,Acctree)
+```
+
+#Use a for loop to run a basic SVM model for our 30 stock companies and store the MSE predicted on the test set of data
+```{r}
+dowtrain_split2 = dowtrain_split
+dowtest_split2 = dowtest_split
+library(e1071)
+MSEsvm = c()
+AccSVM = c()
+SVM.Preds = c()
+for (i in 1:30) {
+  dowtest_split2[[i]][,c(9,17:22)] = scale(dowtest_split2[[i]][,c(9,17:22)])
+  dowtrain_split2[[i]][,c(9,17:22)] = scale(dowtrain_split2[[i]][,c(9,17:22)])
+  y = scale(dowtest_split2[[i]]$percent_change_price)
+  model = svm(percent_change_price ~ lag.high + lag.low + lag.close
+              + lag.volume + lag.open + lag.percent_change_volume_over_last_wk, data = dowtrain_split2[[i]], type = "eps-regression", kernel = "radial")
+  model.preds = predict(model, newdata = dowtest_split2[[i]])
+  MSEsvm[i] = mean((y - model.preds)^2)
+  y2 = ifelse(dowtest_split2[[i]]$percent_change_price > 0.5,1,0)
+  model.class = ifelse(model.preds > 0.5,1,0)
+  AccSVM[i] = 1 - mean(y2!=model.class)
+}
+SVMmse = cbind(n,MSEsvm)
+SVMAcc = cbind(n,AccSVM)
+```
+
+#Take the average of the MSE for the 30 stock models ran for each machine learning technique (LM, tree, SVM) to determine the best model on our data
+```{r}
+LinMean = mean(MSE); LinMean
+TreeMean = mean(MSEtree); TreeMean
+SVMmean = mean(MSEsvm);SVMmean
+LinMeanAcc = mean(AccLin); LinMeanAcc
+TreeMeanAcc = mean(Acctree); TreeMeanAcc
+SVMmeanAcc = mean(AccSVM);SVMmeanAcc
+```
+
+#The lowest average MSE and highest accuracy model is the SVM Radial model and that is the model we will use going forward.
+
+#We will use the last row(week) of the data to predict a single percent change price value for the next week in the future
+```{r}
+SVM.Preds = c()
+for (i in 1:30) {
+  dowtest_split2[[i]][,c(9,17:22)] = scale(dowtest_split2[[i]][,c(9,17:22)])
+  dowtrain_split2[[i]][,c(9,17:22)] = scale(dowtrain_split2[[i]][,c(9,17:22)])
+  y = scale(dowtest_split2[[i]][13,]$percent_change_price)
+  model = svm(percent_change_price ~ lag.high + lag.low + lag.close
+              + lag.volume + lag.open + lag.percent_change_volume_over_last_wk,
+              data = dowtrain_split2[[i]], type = "eps-regression")
+  model.preds = predict(model, newdata = dowtest_split2[[i]][13,])
+  SVM.Preds[i] = model.preds
+}
+Pred.SVM = cbind(n,SVM.Preds);Pred.SVM
+```
+
+
+```{r}
+Pred.SVM = as.data.frame(Pred.SVM);Pred.SVM
+```
+
+#Now we will take the 8 Stocks with the lowest MSE to test and determine the most significant predictors. Those stocks are BAC(4), INTC(14), JPM(16), KO(17), MCD(19), PFE(23), VZ(28), WMT(29).
+Below we will create all 8 models but will not look at the output yet.
+```{r}
+BAC.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[4]])
+INTC.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[14]])
+JPM.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[16]])
+KO.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[17]])
+MCD.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[19]])
+PFE.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[23]])
+VZ.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[28]])
+WMT.mod = tree(percent_change_price ~ lag.high + lag.low + lag.close + lag.volume + lag.open
+                + lag.percent_change_volume_over_last_wk, data = dowtrain_split[[29]])
+```
+
+```{r}
+par(mfrow = c(2,2))
+plot(BAC.mod)
+text(BAC.mod)
+plot(INTC.mod)
+text(INTC.mod)
+plot(JPM.mod)
+text(JPM.mod)
+plot(KO.mod)
+text(KO.mod)
+plot(MCD.mod)
+text(MCD.mod)
+plot(PFE.mod)
+text(PFE.mod)
+plot(VZ.mod)
+text(VZ.mod)
+plot(WMT.mod)
+text(WMT.mod)
+```
+#All variables appear in decision trees so it would be wise to include all the predictors in model.
+
+
+#Now we will look at the risk of each stock using the CAPM model. First we will import the data for the SP500 as our reference market.
+```{r}
+SP500Data = read.csv("C:/Users/Dylan/Documents/MSDA/SEM3/Data Analytics Applications/Dow Jones Case Study/^GSPC.csv", header = TRUE, sep = ",")
+head(SP500Data)
+```
+
+```{r}
+dowstocksplit = split(dowdata, dowdata$stock)
+```
+
+```{r}
+DataStock = as.data.frame(cbind(1:24))
+DataStock = DataStock[-1]
+```
+
+
+#Next we will use a for loop to extract the return from all of our stock variables
+```{r}
+for (i in 1:30) {
+  DataStock[i] = dowstocksplit[[i]]$close
+}
+colnames(DataStock) = n
+DataStock
+```
+
+#Now to take the delt of close to get the return
+```{r}
+library(tseries)
+library(quantmod)
+AA = Delt(DataStock$AA)
+AXP = Delt(DataStock$AXP)
+BA = Delt(DataStock$BA)
+BAC = Delt(DataStock$BAC)
+CAT = Delt(DataStock$CAT)
+CSCO = Delt(DataStock$CSCO)
+CVX = Delt(DataStock$CVX)
+DD = Delt(DataStock$DD)
+DIS = Delt(DataStock$DIS)
+GE = Delt(DataStock$GE)
+HD = Delt(DataStock$HD)
+HPQ = Delt(DataStock$HPQ)
+IBM = Delt(DataStock$IBM)
+INTC = Delt(DataStock$INTC)
+JNJ = Delt(DataStock$JNJ)
+JPM = Delt(DataStock$JPM)
+KO = Delt(DataStock$KO)
+KRFT = Delt(DataStock$KRFT)
+MCD = Delt(DataStock$MCD)
+MMM = Delt(DataStock$MMM)
+MRK = Delt(DataStock$MRK)
+MSFT = Delt(DataStock$MSFT)
+PFE = Delt(DataStock$PFE)
+PG = Delt(DataStock$PG)
+t = Delt(DataStock$T)
+TRV = Delt(DataStock$TRV)
+UTX = Delt(DataStock$UTX)
+VZ = Delt(DataStock$VZ)
+WMT = Delt(DataStock$WMT)
+XOM = Delt(DataStock$XOM)
+SP500 = na.omit(Delt(SP500Data[,5]))
+```
+
+#We will now combine the returns data for all of our stocks into one place
+```{r}
+ReturnData = cbind(AA, AXP, BA, BAC, CAT, CSCO, CVX, DD, DIS, GE, HD, HPQ, IBM, INTC, JNJ, JPM, KO, KRFT, MCD, MMM, MRK, MSFT, PFE, PG, t, TRV, UTX, VZ, WMT, XOM)
+ReturnData = na.omit(ReturnData)
+ReturnData = cbind(ReturnData,SP500)
+colnames(ReturnData) = c("AA", "AXP", "BA", "BAC", "CAT", "CSCO", "CVX", "DD", "DIS", "GE", "HD", "HPQ", "IBM", "INTC", "JNJ", "JPM", "KO", "KRFT", "MCD", "MMM", "MRK", "MSFT", "PFE", "PG", "t", "TRV", "UTX", "VZ", "WMT", "XOM", "SP500")
+```
+
+```{r}
+boxplot(ReturnData,main="Expected Return", xlab="Stock Picks", ylab="Return")
+```
+
+```{r}
+ReturnData = as.data.frame(ReturnData);ReturnData
+```
+
+
+```{r}
+Beta = c()
+for (i in 1:30) {
+  model = lm(ReturnData[,i] ~ SP500, data = ReturnData)
+  Beta[i] <- summary(model)$coefficients[2, 1]
+}
+Beta = cbind(n, Beta)
+Beta = as.data.frame(Beta); Beta
+```
+
+```{r}
+library(car)
+library(ggplot2)
+Preds = Pred.SVM$SVM.Preds
+BetaReturn = cbind(Beta, Preds)
+BetaReturn$Beta = as.numeric(as.character(BetaReturn$Beta))
+BetaReturn$Preds = as.numeric(as.character(BetaReturn$Preds))
+BetaReturn
+ggplot(BetaReturn, 
+       aes(x = BetaReturn$Beta, y = BetaReturn$Preds, color = "green",
+           label = BetaReturn$n)) + 
+  geom_point() + 
+  geom_text(aes(label = BetaReturn$n), hjust = 1, vjust = 1)
+```
+
