@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-dowdata = read.csv("C:/Users/Dylan/Documents/MSDA/SEM3/Data Analytics Applications/Dow Jones Case Study/dow_jones_index.data")
+dowdata = read.csv(".../Dow Jones Case Study/dow_jones_index.data")
 ```
 
 ```{r}
